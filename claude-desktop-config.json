@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "eks-cluster": {
+      "command": "python",
+      "args": ["/workspaces/mcp-eks/server.py"],
+      "env": {
+        "CLUSTER_NAME": "mcp-eks-cluster",
+        "AWS_REGION": "us-west-2"
+      }
+    }
+  }
+}
