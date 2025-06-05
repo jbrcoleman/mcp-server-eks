@@ -18,7 +18,7 @@ async def run_mcp_client():
     
     # Start the MCP server process
     server_process = subprocess.Popen(
-        [sys.executable, "server.py"],
+        [sys.executable, "server-enhanced.py"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

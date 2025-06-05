@@ -22,7 +22,13 @@ Download and install Claude Desktop from https://claude.ai/download
    pip install -r requirements.txt
    ```
 
-3. **Restart Claude Desktop**
+3. **Ensure kubectl access**: The enhanced server requires kubectl access to your EKS cluster:
+   ```bash
+   aws eks update-kubeconfig --region us-west-2 --name mcp-eks-cluster
+   kubectl get nodes  # Test access
+   ```
+
+4. **Restart Claude Desktop**
 
 ## Step 3: Test the Integration
 
@@ -43,6 +49,7 @@ In Claude Desktop, you should see:
 
 If the connection fails:
 1. Check that Python and dependencies are installed
-2. Verify the server.py path in the config
+2. Verify the server-enhanced.py path in the config
 3. Check Claude Desktop logs for errors
-4. Test the server directly with: `python server.py`
+4. Test the server directly with: `python server-enhanced.py`
+5. Ensure kubectl access to your EKS cluster is configured
