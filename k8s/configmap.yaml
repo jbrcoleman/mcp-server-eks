@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-config
+  namespace: mcp-server
+data:
+  server_name: "eks-mcp-server"
+  log_level: "INFO"
+  cluster_name: "mcp-eks-cluster"
