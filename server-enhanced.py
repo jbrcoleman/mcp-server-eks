@@ -73,7 +73,7 @@ async def handle_read_resource(uri: AnyUrl) -> str:
             namespaces = v1.list_namespace()
             return json.dumps({
                 "cluster_name": os.getenv("CLUSTER_NAME", "mcp-eks-cluster"),
-                "region": os.getenv("AWS_REGION", "us-west-2"),
+                "region": os.getenv("AWS_REGION", "us-east-1"),
                 "namespace_count": len(namespaces.items),
                 "server_version": "1.28",
                 "namespaces": [ns.metadata.name for ns in namespaces.items]

@@ -12,8 +12,8 @@ fi
 
 # Create ECR repository if it doesn't exist
 echo "Creating ECR repository..."
-aws ecr describe-repositories --repository-names mcp-server --region ${AWS_REGION:-us-west-2} || \
-aws ecr create-repository --repository-name mcp-server --region ${AWS_REGION:-us-west-2}
+aws ecr describe-repositories --repository-names mcp-server --region ${AWS_REGION:-us-east-1} || \
+aws ecr create-repository --repository-name mcp-server --region ${AWS_REGION:-us-east-1}
 
 # Deploy infrastructure
 echo "Deploying infrastructure..."

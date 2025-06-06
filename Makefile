@@ -1,7 +1,7 @@
 .PHONY: init plan apply deploy clean destroy
 
 # Variables
-REGION ?= us-west-2
+REGION ?= us-east-1
 CLUSTER_NAME ?= mcp-eks-cluster
 IMAGE_TAG ?= latest
 

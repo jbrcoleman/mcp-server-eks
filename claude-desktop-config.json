@@ -5,7 +5,7 @@
       "args": ["/workspaces/mcp-eks/server-enhanced.py"],
       "env": {
         "CLUSTER_NAME": "mcp-eks-cluster",
-        "AWS_REGION": "us-west-2"
+        "AWS_REGION": "us-east-1"
       }
     }
   }

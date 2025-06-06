@@ -22,3 +22,18 @@ output "cluster_arn" {
   description = "The Amazon Resource Name (ARN) of the cluster"
   value       = module.eks.cluster_arn
 }
+
+output "karpenter_irsa_arn" {
+  description = "The ARN of the Karpenter IRSA role"
+  value       = module.karpenter_irsa.iam_role_arn
+}
+
+output "karpenter_node_instance_profile_name" {
+  description = "The name of the Karpenter node instance profile"
+  value       = module.eks.eks_managed_node_groups["karpenter"].iam_role_name
+}
+
+output "cluster_certificate_authority_data" {
+  description = "Base64 encoded certificate data required to communicate with the cluster"
+  value       = module.eks.cluster_certificate_authority_data
+}

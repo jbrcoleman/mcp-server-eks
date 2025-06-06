@@ -66,28 +66,43 @@ module "eks" {
   subnet_ids                     = module.vpc.private_subnets
   cluster_endpoint_public_access = true
 
+  # Minimal node group for Karpenter installation
   eks_managed_node_groups = {
-    mcp_server_nodes = {
-      name = "mcp-server-nodes"
-
+    karpenter = {
+      name = "karpenter"
+      
       instance_types = ["t3.medium"]
-
+      capacity_type  = "ON_DEMAND"
+      
       min_size     = 1
-      max_size     = 3
-      desired_size = 2
-
-      pre_bootstrap_user_data = <<-EOT
-      #!/bin/bash
-      /etc/eks/bootstrap.sh ${local.cluster_name}
-      EOT
-
-      vpc_security_group_ids = [aws_security_group.mcp_server_sg.id]
+      max_size     = 2
+      desired_size = 1
+      
+      iam_role_additional_policies = {
+        AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      }
+      
+      labels = {
+        "karpenter.sh/provisioner-name" = "default"
+      }
+      
+      taints = {
+        addons = {
+          key    = "CriticalAddonsOnly"
+          value  = "true"
+          effect = "NO_SCHEDULE"
+        }
+      }
     }
   }
 
+  # Enable IRSA for Karpenter
+  enable_irsa = true
+  
   tags = {
     Environment = "development"
     Terraform   = "true"
+    "karpenter.sh/discovery" = local.cluster_name
   }
 }
 
@@ -132,15 +147,26 @@ resource "aws_security_group" "mcp_server_sg" {
   }
 }
 
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect = "Allow"
+# Karpenter IAM role for service account
+module "karpenter_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
 
-    principals {
-      type        = "Service"
-      identifiers = ["eks.amazonaws.com"]
+  role_name                          = "karpenter-controller-${local.cluster_name}"
+  attach_karpenter_controller_policy = true
+
+  karpenter_controller_cluster_name       = module.eks.cluster_name
+  karpenter_controller_node_iam_role_arns = [module.eks.eks_managed_node_groups["karpenter"].iam_role_arn]
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["karpenter:karpenter"]
     }
+  }
 
-    actions = ["sts:AssumeRole"]
+  tags = {
+    Environment = "development"
+    Terraform   = "true"
   }
 }

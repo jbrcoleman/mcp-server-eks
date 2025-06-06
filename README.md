@@ -7,6 +7,7 @@ This project deploys a Model Context Protocol (MCP) server on Amazon EKS using T
 - **MCP Server**: Python-based server implementing MCP protocol
 - **Container**: Docker container for the MCP server
 - **Kubernetes**: EKS cluster for container orchestration
+- **Karpenter**: Kubernetes-native node autoscaler for efficient scaling
 - **Infrastructure**: Terraform for AWS resource management
 
 ## Prerequisites
@@ -21,20 +22,27 @@ This project deploys a Model Context Protocol (MCP) server on Amazon EKS using T
 
 1. **Set environment variables**:
 ```bash
-export AWS_REGION=us-west-2
+export AWS_REGION=us-east-1
 export AWS_ACCOUNT_ID=your-account-id
 export CLUSTER_NAME=mcp-eks-cluster
 ```
 
-2. **Deploy infrastructure**:
+2. **Deploy with Karpenter (Recommended)**:
+```bash
+# Option 1: Deploy everything at once
+./scripts/deploy.sh all
+
+# Option 2: Phase-by-phase deployment
+./scripts/deploy.sh infrastructure  # Deploy EKS cluster
+./scripts/deploy.sh karpenter       # Deploy Karpenter autoscaler
+./scripts/deploy.sh app             # Deploy MCP server
+```
+
+3. **Legacy deployment (without Karpenter)**:
 ```bash
 make init
 make plan
 make apply
-```
-
-3. **Deploy application**:
-```bash
 make deploy
 ```
 
@@ -48,7 +56,10 @@ make deploy
 ├── terraform/                   # Infrastructure as code
 │   ├── main.tf                 # Main Terraform configuration
 │   ├── variables.tf            # Variable definitions
-│   └── outputs.tf              # Output definitions
+│   ├── outputs.tf              # Output definitions
+│   └── karpenter/              # Karpenter deployment
+│       ├── main.tf             # Karpenter Helm chart and providers
+│       └── nodepool.tf         # NodePool and EC2NodeClass
 ├── k8s/                        # Kubernetes manifests
 │   ├── namespace.yaml          # Namespace definition
 │   ├── deployment.yaml         # Application deployment
@@ -85,9 +96,23 @@ make deploy
 
 ## Deployment Commands
 
-### Infrastructure Deployment
+### Karpenter-based Deployment (Recommended)
 ```bash
-# Initialize and deploy infrastructure
+# Deploy everything with Karpenter
+./scripts/deploy.sh all
+
+# Or deploy in phases for more control
+./scripts/deploy.sh infrastructure  # Phase 1: EKS cluster with minimal nodes
+./scripts/deploy.sh karpenter       # Phase 2: Karpenter installation
+./scripts/deploy.sh app             # Phase 3: MCP server application
+
+# Test deployment
+./scripts/test-deployment.sh
+```
+
+### Legacy Infrastructure Deployment
+```bash
+# Initialize and deploy infrastructure (without Karpenter)
 make init plan apply
 
 # Build and deploy application
@@ -95,9 +120,6 @@ make deploy
 
 # Complete deployment (infrastructure + app)
 make full-deploy
-
-# Test complete deployment
-./scripts/test-deployment.sh
 ```
 
 ### Local Testing
@@ -124,10 +146,19 @@ cp claude-desktop-config.json ~/Library/Application\ Support/Claude/claude_deskt
 ## Configuration
 
 Environment variables:
-- `AWS_REGION`: AWS region (default: us-west-2)
+- `AWS_REGION`: AWS region (default: us-east-1)
 - `CLUSTER_NAME`: EKS cluster name (default: mcp-eks-cluster)
 - `IMAGE_TAG`: Docker image tag (default: latest)
 - `AWS_ACCOUNT_ID`: Your AWS account ID
+
+### Karpenter Configuration
+
+The Karpenter setup includes:
+- **Minimal managed node group**: Single t3.medium node for Karpenter installation
+- **NodePool**: Configures instance types (t3.medium/large/xlarge) and capacity types (spot/on-demand)
+- **EC2NodeClass**: Defines AMI family, security groups, and subnets
+- **Auto-scaling**: Nodes scale based on pod scheduling requirements
+- **Cost optimization**: Prefers spot instances when available
 
 ## Monitoring
 
@@ -188,7 +219,15 @@ aws ecr describe-repositories --repository-names mcp-server
 
 ## Cleanup
 
-To destroy all resources:
+### Karpenter Deployment Cleanup
+```bash
+# Remove in reverse order
+kubectl delete -f k8s/
+cd terraform/karpenter && terraform destroy -auto-approve
+cd ../.. && terraform destroy -auto-approve
+```
+
+### Legacy Deployment Cleanup
 ```bash
 make destroy
 ```

@@ -24,7 +24,7 @@ Download and install Claude Desktop from https://claude.ai/download
 
 3. **Ensure kubectl access**: The enhanced server requires kubectl access to your EKS cluster:
    ```bash
-   aws eks update-kubeconfig --region us-west-2 --name mcp-eks-cluster
+   aws eks update-kubeconfig --region us-east-1 --name mcp-eks-cluster
    kubectl get nodes  # Test access
    ```
 
