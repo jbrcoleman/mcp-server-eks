@@ -54,12 +54,10 @@ make deploy
 ├── Dockerfile                   # Container definition
 ├── requirements.txt             # Python dependencies
 ├── terraform/                   # Infrastructure as code
-│   ├── main.tf                 # Main Terraform configuration
+│   ├── main.tf                 # Main Terraform configuration with integrated Karpenter
 │   ├── variables.tf            # Variable definitions
 │   ├── outputs.tf              # Output definitions
-│   └── karpenter/              # Karpenter deployment
-│       ├── main.tf             # Karpenter Helm chart and providers
-│       └── nodepool.tf         # NodePool and EC2NodeClass
+│   └── userdata.sh             # EC2 user data script for Karpenter nodes
 ├── k8s/                        # Kubernetes manifests
 │   ├── namespace.yaml          # Namespace definition
 │   ├── deployment.yaml         # Application deployment
@@ -76,23 +74,45 @@ make deploy
 
 ## MCP Server Features
 
-### Server (`server-enhanced.py`) 
-- **Real Kubernetes API Integration**: Connects to actual EKS cluster
-- **Resources**: 
-  - Live cluster information with namespace counts
-  - Real-time node status and information
-  - Health checks with API connectivity status
-- **Tools**: 
-  - `get_cluster_status` - Real cluster metrics with optional node details
-  - `list_pods` - Live pod information from any namespace with status
-  - `get_deployments` - Deployment status and replica counts
-- **Error Handling**: Graceful API error handling and fallbacks
-- **Automatic Config**: Supports both in-cluster and local kubectl configurations
+### Server (`server-simple.py`) 
+- **Real Kubernetes API Integration**: Connects to actual EKS cluster with proper RBAC
+- **HTTP REST API**: Simple HTTP endpoints for easy testing and integration
+- **Endpoints**: 
+  - `GET /health` - Health check with Kubernetes API connectivity status
+  - `GET /cluster-info` - Live cluster information with namespace counts
+  - `GET /nodes` - Real-time node status and information
+  - `GET /pods?namespace=<ns>` - Live pod information from any namespace
+  - `GET /deployments?namespace=<ns>` - Deployment status and replica counts
+- **Security**: Proper RBAC with minimal required permissions
+- **Error Handling**: Graceful API error handling and detailed error responses
+- **Load Balancer**: External access via AWS Application Load Balancer
 
-### Client Integration
-- **Claude Desktop**: Natural language interface to your EKS cluster
-- **Programmatic Access**: Python client example for automation
-- **Health Monitoring**: Liveness and readiness probes
+### What is MCP (Model Context Protocol)?
+
+**MCP** enables AI assistants like Claude to connect to external data sources and tools. Instead of running kubectl commands, you can ask natural language questions about your cluster!
+
+**The Magic:** Your EKS Cluster ↔️ MCP Server ↔️ Claude Desktop ↔️ Natural Language
+
+### Natural Language Examples
+
+Instead of commands like `kubectl get nodes`, you can ask Claude:
+
+- *"How is my cluster doing?"* → Gets health, nodes, and status
+- *"Are my MCP server pods running?"* → Checks pod health and restarts  
+- *"What Karpenter nodes do I have?"* → Shows auto-scaled nodes
+- *"Show me all my namespaces"* → Lists cluster namespaces
+- *"Is my cluster having any issues?"* → Comprehensive health check
+
+### Demo the Natural Language Interface
+```bash
+# See what natural language queries would look like
+python3 demo-natural-language.py
+```
+
+### Client Integration Options
+1. **HTTP REST API**: Direct HTTP access for testing and integration
+2. **Claude Desktop**: Natural language interface via MCP bridge (see claude-desktop-config.json)
+3. **Load Balancer**: External access via AWS ELB for production use
 
 ## Deployment Commands
 
@@ -153,12 +173,20 @@ Environment variables:
 
 ### Karpenter Configuration
 
-The Karpenter setup includes:
-- **Minimal managed node group**: Single t3.medium node for Karpenter installation
+The Karpenter setup follows AWS EKS Blueprints pattern and includes:
+- **EKS Module Integration**: Uses terraform-aws-modules/eks with built-in Karpenter support
+- **Managed Node Group**: 2 t3.medium nodes with karpenter.sh/controller taint for system pods
+- **Pod Identity**: Uses EKS Pod Identity for secure AWS API access
 - **NodePool**: Configures instance types (t3.medium/large/xlarge) and capacity types (spot/on-demand)
-- **EC2NodeClass**: Defines AMI family, security groups, and subnets
-- **Auto-scaling**: Nodes scale based on pod scheduling requirements
-- **Cost optimization**: Prefers spot instances when available
+- **EC2NodeClass**: Defines AMI family (AL2023), security groups, and subnets using discovery tags
+- **Auto-scaling**: Nodes scale based on pod scheduling requirements with 30s consolidation
+- **Cost optimization**: Prefers spot instances and consolidates underutilized nodes
+
+### Current Status ✅
+- **Karpenter**: Successfully deployed and provisioning nodes (AL2023 AMI)
+- **MCP Server**: HTTP REST API running on Karpenter-managed nodes
+- **Load Balancer**: External access configured and working
+- **RBAC**: Proper permissions for Kubernetes API access
 
 ## Monitoring
 
@@ -174,27 +202,87 @@ kubectl logs -f deployment/mcp-server -n mcp-server
 
 ## Usage Examples
 
-### Using with Claude Desktop
-After configuring Claude Desktop:
+### HTTP REST API
+Access the server directly via HTTP endpoints:
+```bash
+# Get LoadBalancer URL
+LB_URL=$(kubectl get service mcp-server-service -n mcp-server -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+# Health check
+curl http://$LB_URL/health
+
+# Cluster information
+curl http://$LB_URL/cluster-info
+
+# Node information
+curl http://$LB_URL/nodes
+
+# Pod information
+curl http://$LB_URL/pods?namespace=mcp-server
+
+# Deployment information
+curl http://$LB_URL/deployments?namespace=default
 ```
-You: "Can you check the status of my EKS cluster?"
-Claude: [Uses MCP server to get real cluster information]
 
-You: "List all pods in the mcp-server namespace"
-Claude: [Shows live pod status and information]
+### Local Testing
+```bash
+# Port forward for local access
+kubectl port-forward -n mcp-server service/mcp-server-service 8080:80
 
-You: "What deployments are running in default namespace?"
-Claude: [Returns deployment status with replica counts]
+# Test endpoints
+curl http://localhost:8080/health
+curl http://localhost:8080/cluster-info
 ```
 
-### Programmatic Usage
-```python
-# Use the client example as a starting point
-python client-example.py
+## Testing
 
-# Integrate into your own applications
-from mcp.client.session import ClientSession
-# ... see client-example.py for full implementation
+### Quick Test
+Run the comprehensive test suite:
+```bash
+./test-all.sh
+```
+
+### Manual Testing
+```bash
+# Get LoadBalancer URL
+LB_URL=$(kubectl get service mcp-server-service -n mcp-server -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+# Test all endpoints
+curl http://$LB_URL/health
+curl http://$LB_URL/cluster-info  
+curl http://$LB_URL/nodes
+curl http://$LB_URL/pods?namespace=mcp-server
+curl http://$LB_URL/deployments?namespace=default
+```
+
+### Test Karpenter Auto-scaling
+```bash
+# Apply test workload to trigger node provisioning
+kubectl apply -f test-karpenter.yaml
+
+# Watch Karpenter create new nodes
+kubectl get nodeclaim -w
+
+# Scale up to test more provisioning
+kubectl scale deployment test-workload --replicas=8
+
+# Check new nodes
+kubectl get nodes -l karpenter.sh/nodepool
+
+# Clean up
+kubectl delete -f test-karpenter.yaml
+```
+
+### Monitor Karpenter
+```bash
+# Check Karpenter status
+kubectl get nodepool,ec2nodeclass -o wide
+
+# Watch Karpenter logs
+kubectl logs -f -n karpenter -l app.kubernetes.io/name=karpenter
+
+# Check node provisioning
+kubectl get nodeclaim
 ```
 
 ## Troubleshooting
@@ -223,8 +311,7 @@ aws ecr describe-repositories --repository-names mcp-server
 ```bash
 # Remove in reverse order
 kubectl delete -f k8s/
-cd terraform/karpenter && terraform destroy -auto-approve
-cd ../.. && terraform destroy -auto-approve
+cd terraform && terraform destroy -auto-approve
 ```
 
 ### Legacy Deployment Cleanup

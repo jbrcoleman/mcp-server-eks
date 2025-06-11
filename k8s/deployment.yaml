@@ -15,9 +15,10 @@ spec:
       labels:
         app: mcp-server
     spec:
+      serviceAccountName: mcp-server
       containers:
       - name: mcp-server
-        image: mcp-server:latest
+        image: 296592524620.dkr.ecr.us-east-1.amazonaws.com/mcp-server:simple
         ports:
         - containerPort: 8080
         env:

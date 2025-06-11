@@ -9,11 +9,41 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.23"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.10"
+    }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+}
+
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+  }
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    exec {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+    }
+  }
 }
 
 data "aws_availability_zones" "available" {
@@ -48,6 +78,7 @@ module "vpc" {
 
   private_subnet_tags = {
     "kubernetes.io/role/internal-elb" = 1
+    "karpenter.sh/discovery"          = local.cluster_name
   }
 
   tags = {
@@ -57,14 +88,32 @@ module "vpc" {
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.0"
+  version = "~> 20.24"
 
   cluster_name    = local.cluster_name
-  cluster_version = "1.28"
+  cluster_version = "1.33"
 
   vpc_id                         = module.vpc.vpc_id
   subnet_ids                     = module.vpc.private_subnets
   cluster_endpoint_public_access = true
+
+  # Cluster addons
+  cluster_addons = {
+    coredns = {
+      configuration_values = jsonencode({
+        tolerations = [
+          {
+            key    = "karpenter.sh/controller"
+            value  = "true"
+            effect = "NoSchedule"
+          }
+        ]
+      })
+    }
+    eks-pod-identity-agent = {}
+    kube-proxy = {}
+    vpc-cni = {}
+  }
 
   # Minimal node group for Karpenter installation
   eks_managed_node_groups = {
@@ -74,21 +123,21 @@ module "eks" {
       instance_types = ["t3.medium"]
       capacity_type  = "ON_DEMAND"
       
-      min_size     = 1
-      max_size     = 2
-      desired_size = 1
+      min_size     = 2
+      max_size     = 3
+      desired_size = 2
       
       iam_role_additional_policies = {
         AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
       }
       
       labels = {
-        "karpenter.sh/provisioner-name" = "default"
+        "karpenter.sh/controller" = "true"
       }
       
       taints = {
-        addons = {
-          key    = "CriticalAddonsOnly"
+        karpenter = {
+          key    = "karpenter.sh/controller"
           value  = "true"
           effect = "NO_SCHEDULE"
         }
@@ -98,6 +147,11 @@ module "eks" {
 
   # Enable IRSA for Karpenter
   enable_irsa = true
+
+  # Security group tags for Karpenter discovery
+  node_security_group_tags = {
+    "karpenter.sh/discovery" = local.cluster_name
+  }
   
   tags = {
     Environment = "development"
@@ -147,26 +201,157 @@ resource "aws_security_group" "mcp_server_sg" {
   }
 }
 
-# Karpenter IAM role for service account
-module "karpenter_irsa" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
+# Karpenter module for IAM roles and permissions
+module "karpenter" {
+  source  = "terraform-aws-modules/eks/aws//modules/karpenter"
+  version = "~> 20.24"
 
-  role_name                          = "karpenter-controller-${local.cluster_name}"
-  attach_karpenter_controller_policy = true
+  cluster_name          = module.eks.cluster_name
+  enable_v1_permissions = true
+  namespace             = "karpenter"
 
-  karpenter_controller_cluster_name       = module.eks.cluster_name
-  karpenter_controller_node_iam_role_arns = [module.eks.eks_managed_node_groups["karpenter"].iam_role_arn]
+  # Enable Pod Identity Association for Karpenter
+  create_pod_identity_association = true
 
-  oidc_providers = {
-    ex = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["karpenter:karpenter"]
-    }
-  }
+  # Node termination queue and SQS
+  enable_irsa                     = true
+  irsa_oidc_provider_arn          = module.eks.oidc_provider_arn
+  irsa_namespace_service_accounts = ["karpenter:karpenter"]
+
+  # Create IAM role for Karpenter nodes
+  create_node_iam_role = false
+  node_iam_role_arn    = module.eks.eks_managed_node_groups["karpenter"].iam_role_arn
 
   tags = {
     Environment = "development"
     Terraform   = "true"
   }
+}
+
+# Karpenter Helm Release
+resource "helm_release" "karpenter" {
+  namespace        = "karpenter"
+  create_namespace = true
+  name             = "karpenter"
+  repository       = "oci://public.ecr.aws/karpenter"
+  chart            = "karpenter"
+  version          = "1.0.2"
+  wait             = true
+
+  values = [
+    yamlencode({
+      settings = {
+        clusterName = module.eks.cluster_name
+      }
+      serviceAccount = {
+        annotations = {
+          "eks.amazonaws.com/role-arn" = module.karpenter.iam_role_arn
+        }
+      }
+      tolerations = [
+        {
+          key      = "karpenter.sh/controller"
+          operator = "Exists"
+          effect   = "NoSchedule"
+        }
+      ]
+    })
+  ]
+
+  depends_on = [module.karpenter]
+}
+
+# Karpenter NodePool (v1 compatible)
+resource "kubectl_manifest" "karpenter_nodepool" {
+  yaml_body = yamlencode({
+    apiVersion = "karpenter.sh/v1"
+    kind       = "NodePool"
+    metadata = {
+      name = "default"
+    }
+    spec = {
+      template = {
+        metadata = {
+          labels = {
+            "karpenter.sh/capacity-type" = "spot"
+          }
+        }
+        spec = {
+          nodeClassRef = {
+            apiVersion = "karpenter.k8s.aws/v1"
+            kind       = "EC2NodeClass"
+            name       = "default"
+            group      = "karpenter.k8s.aws"
+          }
+          requirements = [
+            {
+              key      = "karpenter.sh/capacity-type"
+              operator = "In"
+              values   = ["spot", "on-demand"]
+            },
+            {
+              key      = "node.kubernetes.io/instance-type"
+              operator = "In"
+              values   = ["t3.medium", "t3.large", "t3.xlarge"]
+            }
+          ]
+        }
+      }
+      limits = {
+        cpu = 1000
+      }
+      disruption = {
+        consolidationPolicy = "WhenEmptyOrUnderutilized"
+        consolidateAfter    = "30s"
+      }
+    }
+  })
+
+  depends_on = [helm_release.karpenter]
+}
+
+# Karpenter EC2NodeClass (v1 compatible)
+resource "kubectl_manifest" "karpenter_nodeclass" {
+  yaml_body = yamlencode({
+    apiVersion = "karpenter.k8s.aws/v1"
+    kind       = "EC2NodeClass"
+    metadata = {
+      name = "default"
+    }
+    spec = {
+      instanceStorePolicy = "RAID0"
+      role                = module.eks.eks_managed_node_groups["karpenter"].iam_role_name
+      
+      amiFamily = "AL2023"
+      amiSelectorTerms = [
+        {
+          name = "amazon-eks-node-al2023-x86_64-standard-1.33-*"
+        }
+      ]
+      
+      subnetSelectorTerms = [
+        {
+          tags = {
+            "karpenter.sh/discovery" = module.eks.cluster_name
+          }
+        }
+      ]
+      
+      securityGroupSelectorTerms = [
+        {
+          tags = {
+            "karpenter.sh/discovery" = module.eks.cluster_name
+          }
+        }
+      ]
+      
+      tags = {
+        Environment = "development"
+        Terraform   = "true"
+        ManagedBy   = "karpenter"
+      }
+    }
+  })
+
+  depends_on = [helm_release.karpenter]
 }

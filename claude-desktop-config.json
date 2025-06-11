@@ -2,10 +2,9 @@
   "mcpServers": {
     "eks-cluster": {
       "command": "python",
-      "args": ["/workspaces/mcp-eks/server-enhanced.py"],
+      "args": ["/workspaces/mcp-eks/server-claude-bridge.py"],
       "env": {
-        "CLUSTER_NAME": "mcp-eks-cluster",
-        "AWS_REGION": "us-east-1"
+        "MCP_API_BASE": "<update>"
       }
     }
   }

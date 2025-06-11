@@ -25,12 +25,17 @@ output "cluster_arn" {
 
 output "karpenter_irsa_arn" {
   description = "The ARN of the Karpenter IRSA role"
-  value       = module.karpenter_irsa.iam_role_arn
+  value       = module.karpenter.iam_role_arn
 }
 
 output "karpenter_node_instance_profile_name" {
   description = "The name of the Karpenter node instance profile"
-  value       = module.eks.eks_managed_node_groups["karpenter"].iam_role_name
+  value       = module.karpenter.instance_profile_name
+}
+
+output "karpenter_queue_name" {
+  description = "The name of the Karpenter SQS queue"
+  value       = module.karpenter.queue_name
 }
 
 output "cluster_certificate_authority_data" {

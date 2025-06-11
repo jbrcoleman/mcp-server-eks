@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from kubernetes import client, config
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
+from mcp.types import ServerCapabilities, ResourcesCapability, ToolsCapability
 from mcp.server.stdio import stdio_server
 from mcp.types import Resource, Tool, TextContent
 from pydantic import AnyUrl
@@ -294,9 +295,9 @@ async def main():
             InitializationOptions(
                 server_name="eks-mcp-server-enhanced",
                 server_version="2.0.0",
-                capabilities=server.get_capabilities(
-                    notification_options=None,
-                    experimental_capabilities=None,
+                capabilities=ServerCapabilities(
+                    resources=ResourcesCapability(subscribe=False, listChanged=False),
+                    tools=ToolsCapability(),
                 ),
             ),
         )
